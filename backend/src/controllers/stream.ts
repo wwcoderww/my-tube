@@ -9,13 +9,11 @@ const execFileAsync = promisify(execFile);
 
 export default async (req: Request, res: Response) => {
   const videoId = (req.params.id as string).trim();
-  const rangeHeader = req.headers.range;
+  const rangeHeader = req.headers.range || "bytes=0-";
 
-  if (!rangeHeader) {
-    return res
-      .status(400)
-      .send("Requires HTTP Range Header for media streams.");
-  }
+  console.log(
+    `[Stream Controller] Processing stream proxy for ID: ${videoId} using Range: ${rangeHeader}`,
+  );
 
   const args = [
     "-g",
@@ -26,7 +24,6 @@ export default async (req: Request, res: Response) => {
     "--",
     videoId,
   ];
-  console.log("[Stream Controller] Resolving target URL for: " + videoId);
 
   try {
     const { stdout } = await execFileAsync(YTDLP_BINARY, args);
@@ -43,7 +40,7 @@ export default async (req: Request, res: Response) => {
       headers: {
         Range: rangeHeader,
         "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         Accept: "*/*",
       },
     };
@@ -54,21 +51,23 @@ export default async (req: Request, res: Response) => {
       finalUrl,
       proxyRequestOptions,
       (proxyResponse) => {
+        // Force a 206 Partial Content status if the upstream CDN doesn't explicitly return one
         const statusCode = proxyResponse.statusCode || 206;
+
         res.writeHead(statusCode, proxyResponse.headers);
         proxyResponse.pipe(res);
       },
     );
 
     proxyReq.on("error", (proxyErr) => {
-      console.error("[Stream Proxy Controller Error]:", proxyErr.message);
+      console.error(
+        "[Stream Proxy Error] Live pipe connection broken:",
+        proxyErr.message,
+      );
       if (!res.headersSent) res.sendStatus(500);
     });
   } catch (err: any) {
-    console.error(
-      "[Stream Controller Details Error]:",
-      err.stderr || err.message,
-    );
+    console.error("[Stream Controller Error]:", err.stderr || err.message);
     if (!res.headersSent) {
       return res.status(500).json({
         error: "Failed to proxy streaming links.",
