@@ -1,0 +1,12 @@
+### 1. Get Video Metadata
+GET http://localhost:5000/api/video/metadata/eio1ezE80Gc
+Accept: application/json
+
+### 2. Download audio
+HEAD http://localhost:5000/api/video/download?id=eio1ezE80Gc&formatId=18&ext=mp4&title=My_Video_Choice
+Accept: */*
+
+### 3. Download video 480p
+# Pass both your 480p formatId and the audio track formatId simultaneously
+HEAD http://localhost:5000/api/video/download?id=eio1ezE80Gc&formatId=audio&ext=mp3&title=My_Converted_Song
+Accept: */*
