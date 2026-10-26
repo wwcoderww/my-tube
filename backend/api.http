@@ -10,3 +10,7 @@ Accept: */*
 # Pass both your 480p formatId and the audio track formatId simultaneously
 HEAD http://localhost:5000/api/video/download?id=eio1ezE80Gc&formatId=audio&ext=mp3&title=My_Converted_Song
 Accept: */*
+
+### 4. Search for videos
+GET http://localhost:5000/api/video/search?q=cats
+Accept: application/json

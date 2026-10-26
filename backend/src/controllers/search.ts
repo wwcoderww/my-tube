@@ -1,0 +1,76 @@
+import { Request, Response } from "express";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { YTDLP_BINARY, UNIVERSAL_EXTRACTOR_ARGS } from "../config/constants.js";
+
+const execFileAsync = promisify(execFile);
+
+export default async (req: Request, res: Response) => {
+  const queryTerm = req.query.q as string;
+
+  if (!queryTerm || !queryTerm.trim()) {
+    return res
+      .status(400)
+      .json({ error: 'Missing or empty search query parameter "q".' });
+  }
+
+  // Define how many search result cards you want to return to the user grid (e.g., 15 results)
+  const maxResults = 15;
+  const searchSyntax = `ytsearch${maxResults}:${queryTerm.trim()}`;
+
+  console.log(
+    `[Search Controller] Querying cluster for term: "${queryTerm.trim()}"`,
+  );
+
+  const args = [
+    "--dump-json",
+    "--flat-playlist", // 👑 CRITICAL: Extracts fast metadata cards without parsing format itags for every single search result
+    "--extractor-args",
+    UNIVERSAL_EXTRACTOR_ARGS,
+    "--",
+    searchSyntax,
+  ];
+
+  try {
+    const { stdout } = await execFileAsync(YTDLP_BINARY, args, {
+      maxBuffer: 1024 * 1024 * 15,
+    });
+
+    // yt-dlp returns a newline-separated list of individual JSON strings for flat playlists
+    const lines = stdout
+      .trim()
+      .split("\n")
+      .filter((line) => line.trim() !== "");
+
+    const resultsGrid = lines.map((line) => {
+      const parsedItem = JSON.parse(line);
+      return {
+        id: parsedItem.id,
+        title: parsedItem.title,
+        uploader:
+          parsedItem.uploader || parsedItem.channel || "Unknown Channel",
+        duration: parsedItem.duration || null,
+        views: parsedItem.view_count || 0,
+        thumbnail:
+          parsedItem.thumbnail ||
+          (parsedItem.thumbnails && parsedItem.thumbnails[0]?.url) ||
+          null,
+        url: `https://youtube.com{parsedItem.id}`,
+      };
+    });
+
+    return res.json({
+      query: queryTerm.trim(),
+      resultsCount: resultsGrid.length,
+      results: resultsGrid,
+    });
+  } catch (err: any) {
+    console.error("[Search Controller Error]:", err.stderr || err.message);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        error: "Failed to extract search data results.",
+        debugMessage: err.stderr || err.message,
+      });
+    }
+  }
+};
