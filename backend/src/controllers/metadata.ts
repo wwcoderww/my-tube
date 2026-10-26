@@ -23,9 +23,9 @@ export default async (req: Request, res: Response) => {
     });
     const metadata = JSON.parse(stdout);
 
-    const progressive: any[] = [];
-    const videoOnly: any[] = [];
+    const videoOptions: any[] = [];
     const audioOnly: any[] = [];
+    const seenVideoHeights = new Set<number>();
     const seenAudioTracks = new Set<string>();
 
     const sortedFormats = metadata.formats.sort((a: any, b: any) => {
@@ -38,12 +38,13 @@ export default async (req: Request, res: Response) => {
       let language = "en";
       if (f.xtags) {
         const langMatch = f.xtags.match(/lang=([^&]+)/);
-        if (langMatch && langMatch) language = langMatch[1];
+        if (langMatch && langMatch) language = langMatch;
       } else if (f.language) {
         language = f.language;
       }
 
       const isEnglish = language.startsWith("en");
+      const height = f.height || 0;
 
       const formatOption = {
         formatId: f.format_id,
@@ -51,20 +52,19 @@ export default async (req: Request, res: Response) => {
         resolution:
           f.resolution ||
           (f.width && f.height ? `${f.width}x${f.height}` : "unknown"),
-        height: f.height || 0,
+        height: height,
         fps: f.fps || null,
-        audioBitrate: f.abr || null,
-        videoBitrate: f.vbr || null,
         container: f.container || f.ext,
-        language: language,
-        url: f.url,
         filesize: f.filesize || f.filesize_approx || null,
       };
 
-      if (f.vcodec !== "none" && f.acodec !== "none") {
-        progressive.push(formatOption);
-      } else if (f.vcodec !== "none" && f.acodec === "none") {
-        videoOnly.push(formatOption);
+      // 👑 UNIFIED VIDEO DISCOVERY: Catch ANY format that contains video tracks
+      if (f.vcodec !== "none" && height > 0) {
+        // Keep only the highest bitrate option per resolution tier (e.g., skip duplicate 1080p formats)
+        if (!seenVideoHeights.has(height)) {
+          seenVideoHeights.add(height);
+          videoOptions.push(formatOption);
+        }
       } else if (f.vcodec === "none" && f.acodec !== "none" && isEnglish) {
         const approxBitrateGroup = Math.round((f.abr || 0) / 10) * 10;
         const dedupeKey = `${f.ext}-${approxBitrateGroup}`;
@@ -81,17 +81,15 @@ export default async (req: Request, res: Response) => {
       title: metadata.title,
       uploader: metadata.uploader,
       duration: metadata.duration,
+      views: metadata.view_count || 0,
       thumbnail:
         metadata.thumbnail ||
-        (metadata.thumbnails && metadata.thumbnails[0]?.url) ||
+        (metadata.thumbnails && metadata.thumbnails?.url) ||
         null,
       description: metadata.description || "",
       downloadOptions: {
-        combined: progressive.sort((a, b) => (b.height || 0) - (a.height || 0)),
-        videoOnly: videoOnly.sort((a, b) => (b.height || 0) - (a.height || 0)),
-        audioOnly: audioOnly.sort(
-          (a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0),
-        ),
+        video: videoOptions.sort((a, b) => b.height - a.height),
+        audio: audioOnly.sort((a, b) => b.audioBitrate - a.audioBitrate),
       },
     });
   } catch (err: any) {
