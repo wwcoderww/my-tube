@@ -1,0 +1,25 @@
+You will likely need to update or maintain this code every 2 to 6 months [Search Activities]. Because this backend relies on scraping and emulating official YouTube player clients, it is directly exposed to YouTube's ongoing engineering changes and security updates [Search Activities].
+The parts of your code that will require attention over time can be broken down into three categories:
+
+2. Automated Maintenance: yt-dlp (YTDLP_BINARY)
+
+YouTube updates its platform code almost weekly to roll out features, test new ad-insertion methods (like SSAP), or tweak signature algorithms [Search Activities].
+• The Risk: If YouTube changes its internal player code, your metadata or stream extraction will immediately throw a 500 Internal Server Error [Search Activities].
+• The Fix: You don't have to rewrite your TypeScript code when this happens. The yt-dlp developer community usually releases a patch within 24 to 48 hours [Search Activities]. To fix it, you simply update the global yt-dlp binary on your machine [Search Activities]:bash
+sudo yt-dlp -U
+Use code with caution.
+
+3. Manual Maintenance: Client Emulation Matrix (The Core Vulnerability)
+
+The main line in your code that will eventually need manual updates is this string:
+typescript
+const UNIVERSAL_EXTRACTOR_ARGS = 'youtube:player-client=default,tv,mweb;formats=missing_pot';
+Use code with caution.
+When YouTube completely deprecates an older client version or patches the guest fallback pathways for the tv or mweb clients, yt-dlp will start throwing Requested format is not available errors again.
+When that happens, you will need to check the active yt-dlp GitHub Issues tracker to see what new workaround string the community recommends (e.g., swapping tv for ios with a different configuration argument) and update that single variable in your code.
+
+Summary of What to Expect
+
+• Minor breakages (Every few weeks): Fixed instantly by updating yt-dlp on your system.
+• Major client structural changes (1–2 times a year): Requires a 5-minute manual edit to change your player-client argument string based on the latest community workarounds.
+Would you like help writing an automated script cronjob that updates yt-dlp every night so you don't have to manage updates manually, or are you ready to deploy this backend to Render?
