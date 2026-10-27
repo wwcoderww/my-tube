@@ -5,13 +5,13 @@ import { PagePropsType } from "./page";
 
 export default async function Search({ searchParams }: PagePropsType) {
   const params = await searchParams;
-  const data = await getSearch(params.search);
+  const data = params.search ? await getSearch(params.search) : [];
   console.log(data);
 
   return (
     <div>
       <Searchbar />
-      <List data={data.results} />
+      <List data={data} />
     </div>
   );
 }
