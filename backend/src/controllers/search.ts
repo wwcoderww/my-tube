@@ -11,6 +11,7 @@ export default async (
   res: Response<SearchResult[] | GlobalError>,
 ) => {
   const queryTerm = req.query.q as string;
+  const queryAmt = req.query.amt as string;
 
   if (!queryTerm || !queryTerm.trim()) {
     return res
@@ -18,7 +19,7 @@ export default async (
       .json({ error: 'Missing or empty search query parameter "q".' });
   }
 
-  const maxResults = 15;
+  const maxResults = queryAmt || 15;
   const searchSyntax = `ytsearch${maxResults}:${queryTerm.trim()}`;
 
   console.log(
