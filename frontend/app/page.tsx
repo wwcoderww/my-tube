@@ -12,12 +12,11 @@ export default function page({ searchParams }: PagePropsType) {
       <div className="w-1/6">
         <Sidebar />
       </div>
-      <div className="w-4/6 overflow-y-scroll bg-zinc-800">
+      <div className="w-5/6 overflow-y-scroll bg-zinc-800">
         <Suspense fallback={<div>Loading...</div>}>
           <Search searchParams={searchParams} />
         </Suspense>
       </div>
-      <div className="w-1/6 overflow-y-scroll">Downloads</div>
     </div>
   );
 }

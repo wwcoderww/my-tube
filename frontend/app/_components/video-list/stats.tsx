@@ -8,7 +8,7 @@ type StatsProps = {
 
 export default function Stats({ views, duration }: StatsProps) {
   return (
-    <div className=" text-sm font-medium text-zinc-200/80  text-center ">
+    <div className="text-sm font-semibold text-zinc-200/70  text-center ">
       <p>
         {formatViews(views)} | {duration && formatTime(duration)}
       </p>
