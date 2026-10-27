@@ -1,0 +1,9 @@
+{
+  "name": "my-project-root",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend",
+    "shared"
+  ]
+}
