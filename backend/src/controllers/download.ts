@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { spawn } from "child_process";
+import { spawn, execFile } from "child_process";
 import { YTDLP_BINARY, UNIVERSAL_EXTRACTOR_ARGS } from "../config/constants.js";
 
 export default (req: Request, res: Response) => {
@@ -23,7 +23,8 @@ export default (req: Request, res: Response) => {
   const contentType =
     fileExt === "mp3" ? "audio/mpeg" : isAudio ? "audio/mp4" : "video/mp4";
 
-  const args = [
+  // Base network configuration arguments for yt-dlp
+  const baseArgs = [
     "--user-agent",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "--no-check-certificates",
@@ -31,22 +32,13 @@ export default (req: Request, res: Response) => {
     UNIVERSAL_EXTRACTOR_ARGS,
   ];
 
-  if (isAudio) {
-    args.push("-f", "ba/bestaudio");
-  } else if (["360", "480", "720", "1080", "1440", "2160"].includes(formatId)) {
-    args.push("-f", `bestvideo[height=${formatId}]+ba/best`);
-    args.push("--merge-output-format", "mp4");
-  } else {
-    args.push("-f", formatId);
-  }
-
-  args.push("-o", "-", "--", videoId);
-
   // Live MP3 Re-encoding pipeline branch
   if (fileExt === "mp3") {
     console.log(
       `[Download Controller] Initializing transcoding pipe for MP3 conversion...`,
     );
+    const args = [...baseArgs, "-f", "ba/bestaudio", "-o", "-", "--", videoId];
+
     const ytDlpProcess = spawn(YTDLP_BINARY, args);
     const ffmpegProcess = spawn("ffmpeg", [
       "-i",
@@ -83,32 +75,92 @@ export default (req: Request, res: Response) => {
       ffmpegProcess.kill();
       res.end();
     });
+
+    // Visual Streaming Pipeline via Direct URL Multiplexing & Uniform H.264 Encoding
   } else {
     console.log(
-      `[Download Controller] Executing standard passthrough stream for: ${formatId}`,
+      `[Download Controller] Resolving streaming URLs for real-time multiplexing: ${formatId}`,
     );
-    const child = spawn(YTDLP_BINARY, args);
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      if (!headersSent) {
-        headersSent = true;
-        res.writeHead(200, {
-          "Content-Type": contentType,
-          "Content-Disposition":
-            'attachment; filename="' + safeTitle + "." + fileExt + '"',
-          "Cache-Control": "no-cache",
-        });
+    let targetFormat = formatId;
+    if (["360", "480", "720", "1080", "1440", "2160"].includes(formatId)) {
+      targetFormat = `bestvideo[height=${formatId}]+ba/best`;
+    }
+
+    const urlArgs = [
+      ...baseArgs,
+      "-f",
+      targetFormat,
+      "--get-url",
+      "--",
+      videoId,
+    ];
+
+    execFile(YTDLP_BINARY, urlArgs, (error, stdout) => {
+      if (error) {
+        console.error(
+          "[Download Controller] Failed to extract stream URLs:",
+          error,
+        );
+        return res
+          .status(500)
+          .send("Extraction error encountered while resolving stream URLs.");
       }
-      res.write(chunk);
-    });
 
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderrData += chunk.toString();
-    });
+      const lines = stdout.trim().split("\n");
+      const videoUrl = lines[0];
+      const audioUrl = lines[1] || lines[0];
 
-    child.on("exit", () => {
-      child.kill();
-      res.end();
+      console.log(
+        `[Download Controller] URLs resolved. Spawning synchronized H.264 multiplexer...`,
+      );
+
+      const ffmpegProcess = spawn("ffmpeg", [
+        "-headers",
+        `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\n`,
+        "-i",
+        videoUrl,
+        "-i",
+        audioUrl,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "24",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-f",
+        "mp4",
+        "-movflags",
+        "frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets",
+        "pipe:1",
+      ]);
+
+      ffmpegProcess.stdout.on("data", (chunk: Buffer) => {
+        if (!headersSent) {
+          headersSent = true;
+          res.writeHead(200, {
+            "Content-Type": contentType,
+            "Content-Disposition": `attachment; filename="${safeTitle}.${fileExt}"`,
+            "Cache-Control": "no-cache",
+          });
+        }
+        res.write(chunk);
+      });
+
+      ffmpegProcess.stderr.on("data", (chunk: Buffer) => {
+        stderrData += chunk.toString();
+      });
+
+      ffmpegProcess.on("close", () => {
+        ffmpegProcess.kill();
+        res.end();
+      });
     });
   }
 };
