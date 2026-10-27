@@ -2,10 +2,14 @@ import { Request, Response } from "express";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { YTDLP_BINARY, UNIVERSAL_EXTRACTOR_ARGS } from "../config/constants.js";
+import { GlobalError, SearchResult } from "@project/types";
 
 const execFileAsync = promisify(execFile);
 
-export default async (req: Request, res: Response) => {
+export default async (
+  req: Request,
+  res: Response<SearchResult[] | GlobalError>,
+) => {
   const queryTerm = req.query.q as string;
 
   if (!queryTerm || !queryTerm.trim()) {
@@ -57,11 +61,7 @@ export default async (req: Request, res: Response) => {
       };
     });
 
-    return res.json({
-      query: queryTerm.trim(),
-      resultsCount: resultsGrid.length,
-      results: resultsGrid,
-    });
+    return res.json(resultsGrid);
   } catch (err: any) {
     console.error("[Search Controller Error]:", err.stderr || err.message);
     if (!res.headersSent) {
