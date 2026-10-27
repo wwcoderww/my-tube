@@ -19,7 +19,7 @@ export default function List({ data }: ListProps) {
               width={250}
               height={250}
             />
-            <div className="flex-1 flex flex-col">
+            <div className="flex-1 flex flex-col p-1">
               <div className="text-center ">
                 <p className="text-lg font-semibold">{item.title}</p>
                 <p>{item.uploader}</p>
