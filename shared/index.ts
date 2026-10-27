@@ -1,4 +1,4 @@
-export type searchResult = {
+export type SearchResult = {
   id: string;
   title: string;
   uploader: string;
@@ -6,4 +6,9 @@ export type searchResult = {
   views: number;
   thumbnail: string | null;
   url: string;
+};
+
+export type GlobalError = {
+  error: string;
+  debugMessage?: string;
 };
