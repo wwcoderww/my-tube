@@ -9,19 +9,19 @@ type ListProps = {
 
 export default function List({ data }: ListProps) {
   return (
-    <ul className={`${data.length > 0 ? "border-t-2 border-zinc-700/50" : ""}`}>
+    <ul className={`${data.length && "border-t border-zinc-700/50"}`}>
       {data &&
         data.map((item) => (
           <div key={item.id} className="flex justify-center">
             <Image
               src={item.thumbnail || ""}
               alt={item.title}
-              width={350}
-              height={350}
+              width={300}
+              height={300}
             />
-            <div className="flex-1 flex flex-col p-1 py-2 border-zinc-700/50 border-b-2">
+            <div className="flex-1 flex flex-col p-1 py-2 border-zinc-700/50 border-b">
               <div className="text-center ">
-                <p className="text-lg font-semibold">{item.title}</p>
+                <p className="text-lg font-medium">{item.title}</p>
                 <p>{item.uploader}</p>
               </div>
               <div className="flex flex-1 justify-between items-end gap-2 mx-1 pr-1">

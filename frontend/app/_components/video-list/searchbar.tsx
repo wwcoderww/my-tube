@@ -8,7 +8,7 @@ export default function Searchbar() {
     <div className="flex items-center justify-center py-16">
       <input
         type="text"
-        className="bg-zinc-300 focus:ring-0 focus:outline-none text-zinc-800/90 rounded-xl px-2.5 py-1 min-w-1/2 text-lg"
+        className="bg-zinc-300 focus:ring-0 focus:outline-none text-zinc-800/90 rounded-xl px-2.5 py-px min-w-1/2 text-lg"
         placeholder="Search..."
         onChange={(e) => setQuery("search", e.target.value)}
       />
