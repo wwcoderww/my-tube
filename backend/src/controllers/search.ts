@@ -14,7 +14,6 @@ export default async (req: Request, res: Response) => {
       .json({ error: 'Missing or empty search query parameter "q".' });
   }
 
-  // Define how many search result cards you want to return to the user grid (e.g., 15 results)
   const maxResults = 15;
   const searchSyntax = `ytsearch${maxResults}:${queryTerm.trim()}`;
 
@@ -24,7 +23,7 @@ export default async (req: Request, res: Response) => {
 
   const args = [
     "--dump-json",
-    "--flat-playlist", // 👑 CRITICAL: Extracts fast metadata cards without parsing format itags for every single search result
+    "--flat-playlist",
     "--extractor-args",
     UNIVERSAL_EXTRACTOR_ARGS,
     "--",
@@ -36,7 +35,6 @@ export default async (req: Request, res: Response) => {
       maxBuffer: 1024 * 1024 * 15,
     });
 
-    // yt-dlp returns a newline-separated list of individual JSON strings for flat playlists
     const lines = stdout
       .trim()
       .split("\n")
@@ -55,7 +53,7 @@ export default async (req: Request, res: Response) => {
           parsedItem.thumbnail ||
           (parsedItem.thumbnails && parsedItem.thumbnails[0]?.url) ||
           null,
-        url: `https://youtube.com{parsedItem.id}`,
+        url: parsedItem.url,
       };
     });
 
