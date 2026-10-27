@@ -58,9 +58,7 @@ export default async (req: Request, res: Response) => {
         filesize: f.filesize || f.filesize_approx || null,
       };
 
-      // 👑 UNIFIED VIDEO DISCOVERY: Catch ANY format that contains video tracks
       if (f.vcodec !== "none" && height > 0) {
-        // Keep only the highest bitrate option per resolution tier (e.g., skip duplicate 1080p formats)
         if (!seenVideoHeights.has(height)) {
           seenVideoHeights.add(height);
           videoOptions.push(formatOption);
@@ -91,6 +89,7 @@ export default async (req: Request, res: Response) => {
         video: videoOptions.sort((a, b) => b.height - a.height),
         audio: audioOnly.sort((a, b) => b.audioBitrate - a.audioBitrate),
       },
+      metadata,
     });
   } catch (err: any) {
     console.error("[Metadata Controller Error]:", err.stderr || err.message);
