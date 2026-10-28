@@ -1,6 +1,10 @@
-import { Request, Response } from "express";
-import { spawn, execFile } from "child_process";
+import { execFile, spawn, type ChildProcess } from "child_process";
+import type { Request, Response } from "express";
 import { YTDLP_BINARY, UNIVERSAL_EXTRACTOR_ARGS } from "../config/constants.js";
+
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+const STDERR_LIMIT = 16 * 1024;
 
 export default (req: Request, res: Response) => {
   const videoId = ((req.query.id as string) || "").trim();
@@ -14,33 +18,122 @@ export default (req: Request, res: Response) => {
       .send("Missing required parameter query properties: id and formatId.");
   }
 
-  const safeTitle = videoTitle.replace(/[/\\?%*:|"<>]/g, "-").trim();
-  let stderrData = "";
-  let headersSent = false;
-
+  const safeTitle =
+    videoTitle.replace(/[/\\?%*:|"<>]/g, "-").trim() || "downloaded_media";
   const isAudio =
     ["m4a", "mp3", "opus", "webm"].includes(fileExt) || formatId === "audio";
   const contentType =
     fileExt === "mp3" ? "audio/mpeg" : isAudio ? "audio/mp4" : "video/mp4";
-
-  // Base network configuration arguments for yt-dlp
   const baseArgs = [
     "--user-agent",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    USER_AGENT,
     "--no-check-certificates",
     "--extractor-args",
     UNIVERSAL_EXTRACTOR_ARGS,
   ];
 
-  // Live MP3 Re-encoding pipeline branch
+  let cancelled = false;
+  let responseDone = false;
+  let activeFfmpeg: ChildProcess | null = null;
+  let activeYtDlp: ChildProcess | null = null;
+  let stderrData = "";
+
+  const appendStderr = (chunk: Buffer) => {
+    stderrData = (stderrData + chunk.toString()).slice(-STDERR_LIMIT);
+  };
+
+  const stopProcess = (child: ChildProcess | null) => {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+    }
+  };
+
+  const stopProcesses = () => {
+    stopProcess(activeYtDlp);
+    stopProcess(activeFfmpeg);
+  };
+
+  const canRespond = () =>
+    !cancelled && !responseDone && !res.destroyed && !res.writableEnded;
+
+  const sendDownloadHeaders = () => {
+    if (!canRespond() || res.headersSent) return;
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Content-Disposition": `attachment; filename="${safeTitle}.${fileExt}"`,
+      "Cache-Control": "no-cache",
+    });
+  };
+
+  const fail = (message: string, error?: Error) => {
+    if (!canRespond()) return;
+
+    console.error(
+      "[Download Controller Error]",
+      message,
+      error?.message || stderrData,
+    );
+    responseDone = true;
+    stopProcesses();
+
+    if (!res.headersSent) {
+      res.status(500).send(message);
+    } else {
+      res.end();
+    }
+  };
+
+  const complete = () => {
+    if (!canRespond()) return;
+    responseDone = true;
+    res.end();
+  };
+
+  const streamProcessOutput = (child: ChildProcess) => {
+    const output = child.stdout;
+    if (!output) {
+      fail("Download process did not provide an output stream.");
+      return;
+    }
+
+    output.once("data", sendDownloadHeaders);
+    output.on("error", (error) => fail("Download output stream failed.", error));
+    output.pipe(res);
+  };
+
+  res.on("close", () => {
+    if (res.writableFinished) return;
+    cancelled = true;
+    stopProcesses();
+  });
+
+  res.on("finish", () => {
+    responseDone = true;
+    stopProcesses();
+  });
+
+  res.on("error", (error) => {
+    console.error("[Download Controller] Response stream error:", error);
+    cancelled = true;
+    stopProcesses();
+  });
+
   if (fileExt === "mp3") {
     console.log(
-      `[Download Controller] Initializing transcoding pipe for MP3 conversion...`,
+      "[Download Controller] Initializing transcoding pipe for MP3 conversion...",
     );
-    const args = [...baseArgs, "-f", "ba/bestaudio", "-o", "-", "--", videoId];
 
-    const ytDlpProcess = spawn(YTDLP_BINARY, args);
-    const ffmpegProcess = spawn("ffmpeg", [
+    activeYtDlp = spawn(YTDLP_BINARY, [
+      ...baseArgs,
+      "-f",
+      "ba/bestaudio",
+      "-o",
+      "-",
+      "--",
+      videoId,
+    ]);
+
+    activeFfmpeg = spawn("ffmpeg", [
       "-i",
       "pipe:0",
       "-acodec",
@@ -52,72 +145,90 @@ export default (req: Request, res: Response) => {
       "pipe:1",
     ]);
 
-    ytDlpProcess.stdout.pipe(ffmpegProcess.stdin);
-
-    ffmpegProcess.stdout.on("data", (chunk: Buffer) => {
-      if (!headersSent) {
-        headersSent = true;
-        res.writeHead(200, {
-          "Content-Type": "audio/mpeg",
-          "Content-Disposition": 'attachment; filename="' + safeTitle + '.mp3"',
-          "Cache-Control": "no-cache",
-        });
-      }
-      res.write(chunk);
-    });
-
-    ytDlpProcess.stderr.on("data", (chunk: Buffer) => {
-      stderrData += chunk.toString();
-    });
-
-    ffmpegProcess.on("close", () => {
-      ytDlpProcess.kill();
-      ffmpegProcess.kill();
-      res.end();
-    });
-
-    // Visual Streaming Pipeline via Direct URL Multiplexing & Uniform H.264 Encoding
-  } else {
-    console.log(
-      `[Download Controller] Resolving streaming URLs for real-time multiplexing: ${formatId}`,
+    activeYtDlp.stderr?.on("data", appendStderr);
+    activeYtDlp.on("error", (error) =>
+      fail("Failed to start yt-dlp for audio download.", error),
     );
+    activeYtDlp.on("close", (code) => {
+      if (code !== 0 && !cancelled && !responseDone) {
+        fail("Failed to extract audio for download.");
+      }
+    });
 
-    let targetFormat = formatId;
-    if (["360", "480", "720", "1080", "1440", "2160"].includes(formatId)) {
-      targetFormat = `bestvideo[height=${formatId}]+ba/best`;
+    activeFfmpeg.stderr?.on("data", appendStderr);
+    activeFfmpeg.stdin?.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EPIPE") {
+        fail("Failed to pass audio to the transcoder.", error);
+      }
+    });
+    activeFfmpeg.on("error", (error) =>
+      fail("Failed to start the audio transcoder.", error),
+    );
+    activeFfmpeg.on("close", (code) => {
+      if (cancelled || responseDone) return;
+      if (code !== 0) {
+        fail("Audio transcoding failed.");
+        return;
+      }
+      complete();
+    });
+
+    const ytDlpOutput = activeYtDlp.stdout;
+    const ffmpegInput = activeFfmpeg.stdin;
+    if (!ytDlpOutput || !ffmpegInput) {
+      fail("Could not connect yt-dlp output to the audio transcoder.");
+      return;
     }
 
-    const urlArgs = [
-      ...baseArgs,
-      "-f",
-      targetFormat,
-      "--get-url",
-      "--",
-      videoId,
-    ];
+    ytDlpOutput.pipe(ffmpegInput);
+    streamProcessOutput(activeFfmpeg);
+    return;
+  }
 
-    execFile(YTDLP_BINARY, urlArgs, (error, stdout) => {
+  let targetFormat = formatId;
+  if (["360", "480", "720", "1080", "1440", "2160"].includes(formatId)) {
+    targetFormat = `bestvideo[height=${formatId}]+ba/best`;
+  }
+
+  const urlArgs = [
+    ...baseArgs,
+    "-f",
+    targetFormat,
+    "--get-url",
+    "--",
+    videoId,
+  ];
+
+  activeYtDlp = execFile(
+    YTDLP_BINARY,
+    urlArgs,
+    { encoding: "utf8" },
+    (error, stdout) => {
+      activeYtDlp = null;
+      if (!canRespond()) return;
       if (error) {
-        console.error(
-          "[Download Controller] Failed to extract stream URLs:",
+        fail(
+          "Extraction error encountered while resolving stream URLs.",
           error,
         );
-        return res
-          .status(500)
-          .send("Extraction error encountered while resolving stream URLs.");
+        return;
       }
 
       const lines = stdout.trim().split("\n");
       const videoUrl = lines[0];
-      const audioUrl = lines[1] || lines[0];
+      const audioUrl = lines[1] || videoUrl;
+      if (!videoUrl) {
+        fail("No stream URL was returned for the requested video.");
+        return;
+      }
 
       console.log(
-        `[Download Controller] URLs resolved. Spawning synchronized H.264 multiplexer...`,
+        `[Download Controller] URLs resolved. Spawning synchronized H.264 multiplexer for ${formatId}.`,
       );
 
-      const ffmpegProcess = spawn("ffmpeg", [
+      activeFfmpeg = spawn("ffmpeg", [
         "-headers",
-        `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\n`,
+        `User-Agent: ${USER_AGENT}\r\n`,
         "-i",
         videoUrl,
         "-i",
@@ -141,26 +252,25 @@ export default (req: Request, res: Response) => {
         "pipe:1",
       ]);
 
-      ffmpegProcess.stdout.on("data", (chunk: Buffer) => {
-        if (!headersSent) {
-          headersSent = true;
-          res.writeHead(200, {
-            "Content-Type": contentType,
-            "Content-Disposition": `attachment; filename="${safeTitle}.${fileExt}"`,
-            "Cache-Control": "no-cache",
-          });
+      activeFfmpeg.stderr?.on("data", appendStderr);
+      activeFfmpeg.on("error", (spawnError) =>
+        fail("Failed to start the video transcoder.", spawnError),
+      );
+      activeFfmpeg.on("close", (code) => {
+        if (cancelled || responseDone) return;
+        if (code !== 0) {
+          fail("Video transcoding failed.");
+          return;
         }
-        res.write(chunk);
+        complete();
       });
 
-      ffmpegProcess.stderr.on("data", (chunk: Buffer) => {
-        stderrData += chunk.toString();
-      });
+      streamProcessOutput(activeFfmpeg);
+    },
+  );
 
-      ffmpegProcess.on("close", () => {
-        ffmpegProcess.kill();
-        res.end();
-      });
-    });
-  }
+  activeYtDlp.on("error", (error) =>
+    fail("Failed to start yt-dlp to resolve stream URLs.", error),
+  );
+  activeYtDlp.stderr?.on("data", appendStderr);
 };
